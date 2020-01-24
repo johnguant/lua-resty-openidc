@@ -314,6 +314,17 @@ end
 local function openidc_authorize(opts, session, target_url, prompt)
   local resty_random = require("resty.random")
   local resty_string = require("resty.string")
+  
+  -- If POST return a saving page
+  if ngx.req.get_method() == "POST" then
+    session.data.post_data = true
+    session:save()
+    ngx.req.read_body()
+    ngx.header.content_type = 'text/html'
+    ngx.status = 200
+    ngx.print("<!DOCTYPE html><html><body>Preserving... <script type=\"text/javascript\">document.addEventListener(\"DOMContentLoaded\", function(){sessionStorage.setItem('lua_resty_openidc_preserve_post_params', JSON.stringify(" .. cjson.encode(ngx.req.get_post_args()) .. "));window.location.assign(window.location);});</script></body></html>")
+    return ngx.exit(ngx.HTTP_INTERNAL_SERVER_ERROR)
+  end
 
   -- generate state and nonce
   local state = resty_string.to_hex(resty_random.bytes(16))
@@ -1146,6 +1157,16 @@ local function openidc_authorization_response(opts, session)
 
   if opts.lifecycle and opts.lifecycle.on_authenticated then
     opts.lifecycle.on_authenticated(session)
+  end
+
+  -- If POST data saved load from to send
+  if session.data.post_data then
+    session.data.post_data = false
+    session:save()
+    ngx.header.content_type = 'text/html'
+    ngx.status = 200
+    ngx.print("<!DOCTYPE html><html><body>Restoring...<form id=\"submit-form\" action=\"" .. session.data.original_url .."\" method=\"POST\" style=\"display: none;\"><script type=\"text/javascript\">document.addEventListener(\"DOMContentLoaded\", function(){const data = JSON.parse(sessionStorage.getItem('lua_resty_openidc_preserve_post_params'));sessionStorage.removeItem('lua_resty_openidc_preserve_post_params');const form = document.getElementById('submit-form');Object.keys(data).forEach(function(key) {const input = document.createElement('input');input.name = key; input.value = data[key]; input.type = 'hidden';form.appendChild(input);});form.submit()});</script></body></html>")
+    return ngx.exit(ngx.HTTP_INTERNAL_SERVER_ERROR)
   end
 
   -- save the session with the obtained id_token
